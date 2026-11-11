@@ -1,10 +1,13 @@
 
 from pathlib import Path
+from datetime import timedelta
+import time
+
 import pandas as pd
 import requests
 
 
-# 1. Folder paths
+# 1. PATHS
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
@@ -14,164 +17,197 @@ RAW.mkdir(parents=True, exist_ok=True)
 PROCESSED.mkdir(parents=True, exist_ok=True)
 
 
+# 2. JMA API CONFIGURATION
 
-# 2. API configuration
+URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
 
-url = "https://previous-runs-api.open-meteo.com/v1/forecast"
+START_DATE = "2018-01-01"
+END_DATE = "2026-11-08"
 
-params = {
-    "latitude": 47.56,
-    "longitude": 7.59,
-    "start_date": "2024-01-01",
-    "end_date": "2026-11-08",
-    "hourly": (
-        "temperature_2m_previous_day1,"
-        "precipitation_previous_day1"
-    ),
-    "timezone": "Europe/Zurich"
-}
+TEMP = "temperature_2m_previous_day1"
+PRECIP = "precipitation_previous_day1"
 
 
-# 3. Download historical forecasts
+# 3. DOWNLOAD MONTH BY MONTH
 
-print("Downloading historical weather forecasts...")
-
-response = requests.get(
-    url,
-    params=params,
-    timeout=180
+months = pd.period_range(
+    START_DATE,
+    END_DATE,
+    freq="M"
 )
 
-response.raise_for_status()
-data = response.json()
+all_months = []
 
-if "hourly" not in data:
-    raise ValueError(
-        f"Missing hourly weather data: {data}"
+session = requests.Session()
+
+for month in months:
+
+    start = max(
+        month.start_time.date(),
+        pd.Timestamp(START_DATE).date()
     )
 
-raw_file = RAW / "weather_hourly.csv"
+    end = min(
+        month.end_time.date(),
+        pd.Timestamp(END_DATE).date()
+    )
 
-weather = pd.DataFrame(data["hourly"])
-weather.to_csv(raw_file, index=False)
+    params = {
+        "latitude": 47.56,
+        "longitude": 7.59,
+        "start_date": str(start),
+        "end_date": str(end),
+        "hourly": f"{TEMP},{PRECIP}",
+        "models": "jma_gsm",
+        "timezone": "Europe/Zurich"
+    }
 
-print("Downloaded rows:", len(weather))
-print("Columns:", weather.columns.tolist())
+    print(f"Downloading {start} to {end}...")
+
+    for attempt in range(1, 4):
+        try:
+            response = session.get(
+                URL,
+                params=params,
+                timeout=120
+            )
+            response.raise_for_status()
+
+            data = pd.DataFrame(
+                response.json()["hourly"]
+            )
+
+            required = ["time", TEMP, PRECIP]
+
+            if not set(required).issubset(data.columns):
+                raise ValueError(
+                    f"Missing API columns for {month}"
+                )
+
+            all_months.append(data[required])
+            break
+
+        except (
+            requests.RequestException,
+            KeyError,
+            ValueError
+        ) as error:
+
+            print(
+                f"Attempt {attempt} failed: {error}"
+            )
+
+            if attempt == 3:
+                raise RuntimeError(
+                    f"Download failed for {month}"
+                ) from error
+
+            time.sleep(3 * attempt)
+
+    time.sleep(0.5)
+
+session.close()
 
 
+# 4. COMBINE HOURLY DATA
 
-# 4. Convert hourly data to daily features
+weather = pd.concat(
+    all_months,
+    ignore_index=True
+)
 
-weather["time"] = pd.to_datetime(weather["time"])
+weather["time"] = pd.to_datetime(
+    weather["time"]
+)
+
+weather = weather.sort_values("time")
+
+duplicates = weather["time"].duplicated().sum()
+
+print("\nDuplicate hourly timestamps:", duplicates)
+
+if duplicates:
+    raise ValueError(
+        "Duplicate weather timestamps detected."
+    )
+
+
+# 5. AGGREGATE TO DAILY WEATHER
+
 weather["date"] = weather["time"].dt.date
 
 daily = (
     weather.groupby("date", as_index=False)
     .agg(
-        forecast_temp_mean=(
-            "temperature_2m_previous_day1",
-            "mean"
-        ),
-        forecast_temp_min=(
-            "temperature_2m_previous_day1",
-            "min"
-        ),
-        forecast_temp_max=(
-            "temperature_2m_previous_day1",
-            "max"
-        ),
-        forecast_precipitation=(
-            "precipitation_previous_day1",
-            "sum"
-        ),
+        forecast_temp_mean=(TEMP, "mean"),
+        forecast_temp_min=(TEMP, "min"),
+        forecast_temp_max=(TEMP, "max"),
+        forecast_precipitation=(PRECIP, "sum"),
         hourly_observations=("time", "size"),
-        valid_temp_hours=(
-            "temperature_2m_previous_day1",
-            "count"
-        ),
-        valid_precip_hours=(
-            "precipitation_previous_day1",
-            "count"
-        )
+        valid_temp_hours=(TEMP, "count"),
+        valid_precip_hours=(PRECIP, "count")
     )
 )
 
-
-# 5. Save processed data
-
 daily["date"] = pd.to_datetime(daily["date"])
+
+
+# 6. CHECK COMPLETENESS
+
+daily["complete"] = (
+    (daily["valid_temp_hours"] ==
+     daily["hourly_observations"]) &
+    (daily["valid_precip_hours"] ==
+     daily["hourly_observations"]) &
+    (daily["valid_temp_hours"] > 0)
+)
+
+expected_dates = pd.date_range(
+    START_DATE,
+    END_DATE,
+    freq="D"
+)
+
+missing_dates = expected_dates.difference(
+    daily["date"]
+)
+
+print("\nJMA WEATHER QUALITY CHECK")
+print("Total days:", len(daily))
+print("Complete days:", daily["complete"].sum())
+print("Incomplete days:", (~daily["complete"]).sum())
+print("Missing calendar dates:", len(missing_dates))
+
+print("\nHourly observations per day:")
+print(daily["hourly_observations"].value_counts())
+
+print("\nFirst complete day:")
+print(daily.loc[daily["complete"], "date"].min())
+
+print("\nLast complete day:")
+print(daily.loc[daily["complete"], "date"].max())
+
+if len(missing_dates):
+    print("\nMissing dates:")
+    print(missing_dates)
+
+if not daily["complete"].all() or len(missing_dates):
+    raise ValueError(
+        "Weather archive has missing or incomplete days. "
+        "Existing CSV files have not been overwritten."
+    )
+
+
+# 7. SAVE DATA AFTER VALIDATION
+
+weather.drop(columns="date").to_csv(
+    RAW / "weather_hourly.csv",
+    index=False
+)
 
 daily.to_csv(
     PROCESSED / "weather_daily.csv",
     index=False
 )
 
-
-# 6. Quality checks
-
-print("\nFirst five rows:")
-print(daily.head())
-
-print("\nDate range:")
-print(daily["date"].min(), daily["date"].max())
-
-print("\nTotal daily observations:", len(daily))
-
-print("\nMissing values:")
-print(daily.isna().sum())
-
-print("\nHourly observation counts:")
-print(daily["hourly_observations"].value_counts())
-
-print("\nDays with incomplete forecast data:")
-incomplete = daily[
-    (daily["valid_temp_hours"] <
-     daily["hourly_observations"]) |
-    (daily["valid_precip_hours"] <
-     daily["hourly_observations"])
-]
-print(incomplete.head(20).to_string(index=False))
-print("Total incomplete days:", len(incomplete))
-
-
-
-# 7. Check availability of historical forecasts
-
-valid_weather = daily.dropna(
-    subset=["forecast_temp_mean"]
-)
-
-print("\nWEATHER DATA AVAILABILITY")
-
-print("Total days:", len(daily))
-
-print("Days with valid temperature forecasts:",
-      len(valid_weather))
-
-print("Days without valid temperature forecasts:",
-      daily["forecast_temp_mean"].isna().sum())
-
-if not valid_weather.empty:
-    print("\nFirst valid forecast date:",
-          valid_weather["date"].min())
-
-    print("Last valid forecast date:",
-          valid_weather["date"].max())
-
-    print("\nFirst five valid observations:")
-    print(valid_weather.head())
-else:
-    print("\nNo valid temperature forecasts found.")
-
-
-# 8. Check for fully complete weather days
-complete_weather = daily[
-    (daily["valid_temp_hours"] == daily["hourly_observations"]) &
-    (daily["valid_precip_hours"] == daily["hourly_observations"]) &
-    (daily["valid_temp_hours"] > 0)
-].copy()
-
-print("\nFINAL WEATHER QUALITY CHECK")
-print("Complete weather days:", len(complete_weather))
-print("First complete day:", complete_weather["date"].min())
-print("Last complete day:", complete_weather["date"].max())
+print("\nJMA weather files saved successfully.")

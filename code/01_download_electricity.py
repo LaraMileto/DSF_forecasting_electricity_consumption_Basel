@@ -55,7 +55,6 @@ daily = (
 )
 
 daily["date"] = pd.to_datetime(daily["date"])
-daily = daily[daily["date"] >= "2024-01-01"]
 
 daily.to_csv(
     PROCESSED / "electricity_daily.csv",
