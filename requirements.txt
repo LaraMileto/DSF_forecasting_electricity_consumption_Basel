@@ -4,3 +4,5 @@ requests
 matplotlib
 scikit-learn
 holidays
+ipykernel
+jupyter
