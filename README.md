@@ -67,7 +67,9 @@ We collect historical weather forecast information for Basel-Stadt and aggregate
 
 We use historical forecasts rather than realized weather observations to better approximate the information available when making a real prediction.
 
-**Important:** The availability of individual forecast values by the 12:00 cutoff must be verified before they are used in the final forecasting model.
+**Availability at the 12:00 cutoff:** we use the `previous_day2` forecasts, i.e. the forecast issued about 48 hours before each hour. For every hour of day t+1 this forecast was made on day t−1, so it is always available at 12:00 on day t. (`previous_day1`, issued ~24 hours before, would include forecasts made after the cutoff for the afternoon and evening of day t+1.)
+
+For 318 hours between 13 and 26 April 2026 the archive has no `previous_day2` (or `previous_day3`) precipitation. For those hours only, we use the `previous_day4` forecast, which is older and therefore also available at the cutoff. The column `precip_fallback_hours` in `weather_daily.csv` records how many hours of each day use this fallback.
 
 ### Calendar Information
 
@@ -301,7 +303,8 @@ DSF_forecasting_electricity_consumption_Basel/
 ├── data/
 │   ├── raw/
 │   │   ├── electricity_15min_2026-11-11.csv   (frozen snapshot)
-│   │   └── weather_hourly_2026-11-11.csv      (frozen snapshot)
+│   │   ├── weather_hourly_2026-11-11.csv      (old snapshot, previous_day1, not used)
+│   │   └── weather_hourly_2026-11-17.csv      (frozen snapshot, previous_day2)
 │   │
 │   └── processed/
 │       ├── electricity_daily.csv
@@ -350,7 +353,7 @@ python code/02_download_weather.py
 All team members use **the same dated raw files**, committed in `data/raw/`:
 
 - `electricity_15min_2026-11-11.csv`
-- `weather_hourly_2026-11-11.csv`
+- `weather_hourly_2026-11-17.csv` (`previous_day2` forecasts; the older `weather_hourly_2026-11-11.csv` used `previous_day1` and is kept only for reference)
 
 The source websites can change their data at any time (on 2026-11-12 a re-download of the Basel dataset was missing 44 days in 2026). Re-downloading would give each of us different data and different results. Therefore:
 

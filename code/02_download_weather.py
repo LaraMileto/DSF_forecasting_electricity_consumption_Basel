@@ -32,7 +32,7 @@ RAW.mkdir(parents=True, exist_ok=True)
 PROCESSED.mkdir(parents=True, exist_ok=True)
 
 # Date on which the group's shared raw file was downloaded.
-SNAPSHOT_DATE = "2026-11-11"
+SNAPSHOT_DATE = "2026-11-17"
 SNAPSHOT_FILE = RAW / f"weather_hourly_{SNAPSHOT_DATE}.csv"
 
 
@@ -43,8 +43,17 @@ URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
 START_DATE = "2018-01-01"
 END_DATE = "2026-11-08"
 
-TEMP = "temperature_2m_previous_day1"
-PRECIP = "precipitation_previous_day1"
+# "previous_day2" = forecast issued about 48 hours before each hour.
+# For every hour of day t+1 it was made on day t-1, so it is always
+# available at our 12:00 cutoff on day t. ("previous_day1", ~24 h before,
+# would use forecasts made after the cutoff for the afternoon of t+1.)
+TEMP = "temperature_2m_previous_day2"
+PRECIP = "precipitation_previous_day2"
+
+# Fallback for hours where the archive has no previous_day2 precipitation
+# (13-26 April 2026: also missing for previous_day3). The ~96 h old
+# forecast was made even earlier, so it is also available at the cutoff.
+PRECIP_FALLBACK = "precipitation_previous_day4"
 
 
 def download_weather():
@@ -68,7 +77,7 @@ def download_weather():
             "longitude": 7.59,
             "start_date": str(start),
             "end_date": str(end),
-            "hourly": f"{TEMP},{PRECIP}",
+            "hourly": f"{TEMP},{PRECIP},{PRECIP_FALLBACK}",
             "models": "jma_gsm",
             "timezone": "Europe/Zurich"
         }
@@ -81,7 +90,7 @@ def download_weather():
                 response.raise_for_status()
 
                 data = pd.DataFrame(response.json()["hourly"])
-                required = ["time", TEMP, PRECIP]
+                required = ["time", TEMP, PRECIP, PRECIP_FALLBACK]
 
                 if not set(required).issubset(data.columns):
                     raise ValueError(f"Missing API columns for {month}")
@@ -143,6 +152,16 @@ print("\nDuplicate hourly timestamps:", duplicates)
 if duplicates:
     raise ValueError("Duplicate weather timestamps detected.")
 
+# Fill missing previous_day2 precipitation with the older previous_day4
+# forecast (still known before the cutoff) and record where this happened.
+weather["precip_from_fallback"] = (
+    weather[PRECIP].isna() & weather[PRECIP_FALLBACK].notna()
+)
+weather[PRECIP] = weather[PRECIP].fillna(weather[PRECIP_FALLBACK])
+
+print("Precipitation hours filled from previous_day4:",
+      weather["precip_from_fallback"].sum())
+
 
 # 5. AGGREGATE TO DAILY WEATHER
 
@@ -157,7 +176,8 @@ daily = (
         forecast_precipitation=(PRECIP, "sum"),
         hourly_observations=("time", "size"),
         valid_temp_hours=(TEMP, "count"),
-        valid_precip_hours=(PRECIP, "count")
+        valid_precip_hours=(PRECIP, "count"),
+        precip_fallback_hours=("precip_from_fallback", "sum")
     )
 )
 
