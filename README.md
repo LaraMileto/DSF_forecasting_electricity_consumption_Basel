@@ -300,8 +300,8 @@ DSF_forecasting_electricity_consumption_Basel/
 │
 ├── data/
 │   ├── raw/
-│   │   ├── electricity_15min.csv
-│   │   └── weather_hourly.csv
+│   │   ├── electricity_15min_2026-11-11.csv   (frozen snapshot)
+│   │   └── weather_hourly_2026-11-11.csv      (frozen snapshot)
 │   │
 │   └── processed/
 │       ├── electricity_daily.csv
@@ -338,21 +338,32 @@ Python scripts can be executed from the VS Code terminal.
 
 Make sure the virtual environment is activated and the terminal is in the repository root.
 
-For example, to download electricity data:
+To rebuild the processed daily datasets from the frozen raw snapshots (no internet needed):
 
 ```bash
 python code/01_download_electricity.py
-```
-
-To download historical weather forecast data:
-
-```bash
 python code/02_download_weather.py
 ```
 
-The scripts are intended to save data in the corresponding `data/` folders.
+### Frozen data snapshot (group rule)
 
-**Important:** Downloading data may require an internet connection and may take some time.
+All team members use **the same dated raw files**, committed in `data/raw/`:
+
+- `electricity_15min_2026-11-11.csv`
+- `weather_hourly_2026-11-11.csv`
+
+The source websites can change their data at any time (on 2026-11-12 a re-download of the Basel dataset was missing 44 days in 2026). Re-downloading would give each of us different data and different results. Therefore:
+
+1. **Never re-download by default.** The scripts only read the frozen snapshot named by `SNAPSHOT_DATE` at the top of each script.
+2. **Never edit or overwrite files in `data/raw/`.**
+3. A new snapshot is created only with `--new-snapshot`, which saves a *new* file named with today's date and never overwrites anything:
+
+   ```bash
+   python code/01_download_electricity.py --new-snapshot
+   ```
+
+4. Switching to a new snapshot (changing `SNAPSHOT_DATE`) is a **group decision**, made through a pull request that states why and what changed (rows, date range, missing days).
+5. If `git status` shows changes in `data/` that you did not intend, do **not** commit them; run `git restore data/`.
 
 To explore the data, open:
 
