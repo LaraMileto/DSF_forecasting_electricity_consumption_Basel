@@ -355,6 +355,8 @@ All team members use **the same dated raw files**, committed in `data/raw/`:
 - `electricity_15min_2026-11-11.csv`
 - `weather_hourly_2026-11-17.csv` (`previous_day2` forecasts; the older `weather_hourly_2026-11-11.csv` used `previous_day1` and is kept only for reference)
 
+**Why two different dates?** The date in each file name is the day the file was downloaded. Both files cover the same data period, **up to 8 November 2026**. The weather file is dated 2026-11-17 because the group decided to switch to `previous_day2` forecasts after 11 November, so they could not have been downloaded earlier. We checked that the Open-Meteo forecast archive does not change over time: on 2026-11-17 we re-downloaded the `previous_day1` values for five sample periods between 2018 and 2026 (3,552 hours) and found **0 differences** with the 2026-11-11 file. The weather snapshot is therefore equivalent to one downloaded on 2026-11-11.
+
 The source websites can change their data at any time (on 2026-11-12 a re-download of the Basel dataset was missing 44 days in 2026). Re-downloading would give each of us different data and different results. Therefore:
 
 1. **Never re-download by default.** The scripts only read the frozen snapshot named by `SNAPSHOT_DATE` at the top of each script.
