@@ -114,6 +114,20 @@ Potential features include historical consumption lags, weather forecasts, and c
 
 All features must be checked for availability at the time of prediction to avoid data leakage.
 
+**Implemented in `code/04_prepare_features.py`** → `data/processed/features.csv` (one row per target day t+1, only information available at 12:00 on day t):
+
+| Group | Columns | Reason |
+|---|---|---|
+| Target | `consumption_mwh` | Value to predict |
+| Baseline | `baseline` (= `lag_7`, fallback `lag_14` if missing), `baseline_uses_fallback` | Same-weekday-last-week benchmark |
+| Calendar | `weekday`, `is_weekend`, `month`, `is_holiday` (Basel-Stadt), `is_christmas_period` (24 Dec–6 Jan) | Weekends and holidays are 13–20% lower; Christmas-period workdays ~10% lower |
+| Holiday in lags | `lag_7_is_holiday`, `lag_14_is_holiday` | If day t+1−7 was a holiday, `lag_7` is abnormally low (baseline underestimates by 554 MWh on average in 2018–2024) |
+| Weather (forecast) | mean/min/max temperature, precipitation, `heating_degrees` = max(0, 15 − T), `cooling_degrees` = max(0, T − 15) | U-shaped temperature effect, minimum around 11–16 °C |
+| Consumption lags | `lag_5`, `lag_6`, `lag_7`, `lag_14`, `lag_mean_5_11` | Basel data are published with a delay of about 3 days, so `lag_5` (day t−4) and older keep a one-day safety margin |
+| Period | `period` = train (2018–2024), validation (2025), test (Jan–Oct 2026) | Methodology split. For the monthly validation folds, select training rows by date. |
+
+Scaling/standardization is deliberately not done here: it must be fitted on each fold's training data only.
+
 ### Step 4 — Baseline and Forecasting Models
 
 We begin with a simple benchmark:
@@ -298,7 +312,9 @@ DSF_forecasting_electricity_consumption_Basel/
 ├── code/
 │   ├── 01_download_electricity.py
 │   ├── 02_download_weather.py
-│   └── 03_data_exploration.ipynb
+│   ├── 03_data_exploration.ipynb
+│   ├── 04_prepare_features.py
+│   └── 05_ … 11_ (baselines, models, validation, final test)
 │
 ├── data/
 │   ├── raw/
@@ -308,7 +324,8 @@ DSF_forecasting_electricity_consumption_Basel/
 │   │
 │   └── processed/
 │       ├── electricity_daily.csv
-│       └── weather_daily.csv
+│       ├── weather_daily.csv
+│       └── features.csv                       (feature table for all models)
 │
 ├── output/
 │   ├── figures/
@@ -346,6 +363,12 @@ To rebuild the processed daily datasets from the frozen raw snapshots (no intern
 ```bash
 python code/01_download_electricity.py
 python code/02_download_weather.py
+```
+
+Then build the feature table used by all models:
+
+```bash
+python code/04_prepare_features.py
 ```
 
 ### Frozen data snapshot (group rule)
