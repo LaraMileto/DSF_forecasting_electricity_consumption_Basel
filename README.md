@@ -52,6 +52,8 @@ The resulting daily electricity consumption is the target variable of our foreca
 
 Historical electricity consumption may also be used to construct lagged predictors, provided those observations would have been available at the forecasting deadline.
 
+**Electricity data availability:** Because the exact historical publication times of the Basel-Stadt electricity observations cannot be verified, we adopt a conservative availability assumption: only consumption observations from at least five calendar days before the target date (`lag_5` and older) are used as predictors. This rule is applied consistently throughout the project. Missing lagged observations are handled using explicitly documented fallback or preprocessing procedures.
+
 ### Historical Weather Forecasts
 
 **Source:** Open-Meteo Historical Forecast / Previous Runs API, using the JMA GSM weather model.
@@ -119,11 +121,11 @@ All features must be checked for availability at the time of prediction to avoid
 | Group | Columns | Reason |
 |---|---|---|
 | Target | `consumption_mwh` | Value to predict |
-| Baseline | `baseline` (= `lag_7`, fallback `lag_14` if missing), `baseline_uses_fallback` | Same-weekday-last-week benchmark |
+| Baseline | `baseline` (= `lag_7`, with fallback to `lag_14`, `lag_21`, and `lag_28` if earlier values are missing), `baseline_uses_fallback` | Same-weekday-last-week benchmark, using older same-weekday observations when necessary |
 | Calendar | `weekday`, `is_weekend`, `month`, `is_holiday` (Basel-Stadt), `is_christmas_period` (24 Dec–6 Jan) | Weekends and holidays are 13–20% lower; Christmas-period workdays ~10% lower |
 | Holiday in lags | `lag_7_is_holiday`, `lag_14_is_holiday` | If day t+1−7 was a holiday, `lag_7` is abnormally low (baseline underestimates by 554 MWh on average in 2018–2024) |
 | Weather (forecast) | mean/min/max temperature, precipitation, `heating_degrees` = max(0, 15 − T), `cooling_degrees` = max(0, T − 15) | U-shaped temperature effect, minimum around 11–16 °C |
-| Consumption lags | `lag_5`, `lag_6`, `lag_7`, `lag_14`, `lag_mean_5_11` | Basel data are published with a delay of about 3 days, so `lag_5` (day t−4) and older keep a one-day safety margin |
+| Consumption lags | `lag_5`, `lag_6`, `lag_7`, `lag_14`, `lag_21`, `lag_28`, `lag_mean_5_11` | Historical electricity consumption predictors using observations from at least five calendar days before the target date, consistent with our conservative data-availability assumption |
 | Period | `period` = train (2018–2024), validation (2025), test (Jan–Oct 2026) | Methodology split. For the monthly validation folds, select training rows by date. |
 
 Scaling/standardization is deliberately not done here: it must be fitted on each fold's training data only.
@@ -378,7 +380,7 @@ All team members use **the same dated raw files**, committed in `data/raw/`:
 - `electricity_15min_2026-11-11.csv`
 - `weather_hourly_2026-11-17.csv` (`previous_day2` forecasts; the older `weather_hourly_2026-11-11.csv` used `previous_day1` and is kept only for reference)
 
-**Why two different dates?** The date in each file name is the day the file was downloaded. Both files cover the same data period, **up to 8 November 2026**. The weather file is dated 2026-11-17 because the group decided to switch to `previous_day2` forecasts after 11 November, so they could not have been downloaded earlier. We checked that the Open-Meteo forecast archive does not change over time: on 2026-11-17 we re-downloaded the `previous_day1` values for five sample periods between 2018 and 2026 (3,552 hours) and found **0 differences** with the 2026-11-11 file. The weather snapshot is therefore equivalent to one downloaded on 2026-11-11.
+**Why two different dates?** The date in each filename indicates when the file was downloaded. Both snapshots cover the relevant historical period up to 8 November 2026. The weather snapshot is dated 17 November 2026 because the group switched from `previous_day1` to `previous_day2` forecasts after the initial electricity snapshot was saved. To investigate whether the weather archive had changed, we compared 3,552 hourly `previous_day1` observations from five sample periods between 2018 and 2026 across the downloads of 11 and 17 November. No differences were detected in these sampled observations. However, this does not establish that the entire historical forecast archive is immutable. Both frozen snapshots are retained to ensure reproducibility.
 
 The source websites can change their data at any time (on 2026-11-12 a re-download of the Basel dataset was missing 44 days in 2026). Re-downloading would give each of us different data and different results. Therefore:
 

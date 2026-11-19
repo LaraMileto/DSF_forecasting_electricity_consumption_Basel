@@ -49,7 +49,7 @@ PERIODS = {
 # both sides (see 03_data_exploration, section 8).
 BASE_TEMP = 15.0
 
-LAGS = [5, 6, 7, 14]
+LAGS = [5, 6, 7, 14, 21, 28]  # only lags available at the cutoff
 
 
 # 2. LOAD DATA (built from the frozen snapshots by scripts 01 and 02)
@@ -89,9 +89,16 @@ table["lag_mean_5_11"] = consumption.rolling(7).mean().shift(5)
 
 # 4. BASELINE: same weekday last week, fallback = two weeks before
 
-table["baseline"] = table["lag_7"].fillna(table["lag_14"])
+LAGS = [5, 6, 7, 14, 21, 28]
+
+table["baseline"] = (
+    table["lag_7"]
+    .fillna(table["lag_14"])
+    .fillna(table["lag_21"])
+    .fillna(table["lag_28"])
+)
 table["baseline_uses_fallback"] = (
-    table["lag_7"].isna() & table["lag_14"].notna()
+    table["lag_7"].isna() & table["baseline"].notna()
 )
 
 
@@ -211,7 +218,7 @@ print(
     .agg(first="min", last="max", days="count")
 )
 
-print("\nBaseline rows using the lag_14 fallback:",
+print("\nBaseline rows using a fallback:",
       table["baseline_uses_fallback"].sum())
 print("Holidays:", table["is_holiday"].sum(),
       "| Christmas-period days:", table["is_christmas_period"].sum())
