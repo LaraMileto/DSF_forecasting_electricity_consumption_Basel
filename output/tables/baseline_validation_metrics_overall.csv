@@ -1,0 +1,2 @@
+model,n_days,mae_mwh,rmse_mwh,mean_error_mwh
+baseline_lag7,365,137.2746051753425,201.54019182018706,0.4271129890410944
