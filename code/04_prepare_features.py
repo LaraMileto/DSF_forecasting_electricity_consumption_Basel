@@ -87,9 +87,11 @@ for k in LAGS:
 table["lag_mean_5_11"] = consumption.rolling(7).mean().shift(5)
 
 
-# 4. BASELINE: same weekday last week, fallback = two weeks before
 
-LAGS = [5, 6, 7, 14, 21, 28]
+# 4. BASELINE: same weekday last week, with fallbacks
+
+# Main baseline:
+# lag_7 -> lag_14 -> lag_21 -> lag_28
 
 table["baseline"] = (
     table["lag_7"]
@@ -97,9 +99,47 @@ table["baseline"] = (
     .fillna(table["lag_21"])
     .fillna(table["lag_28"])
 )
+
+# Final fallback:
+# Historical same-weekday average, using only consumption
+# from at least 7 calendar days before the target.
+#
+# Grouping lag_7 by the target weekday ensures that each
+# average contains only earlier observations of that weekday.
+# expanding() uses observations up to the current target date,
+# whose newest underlying consumption is from d-7.
+
+historical_same_weekday_mean = (
+    table["lag_7"]
+    .groupby(table.index.dayofweek)
+    .transform(
+        lambda s: s.expanding(min_periods=1).mean()
+    )
+)
+
+table["baseline"] = table["baseline"].fillna(
+    historical_same_weekday_mean
+)
+
+# If no previous same-weekday observation exists,
+# use the mean of all consumption observations
+# from at least 5 calendar days before the target.
+
+historical_overall_mean = (
+    consumption.shift(5)
+    .expanding(min_periods=1)
+    .mean()
+)
+
+table["baseline"] = table["baseline"].fillna(
+    historical_overall_mean
+)
+
+# Record whether the prediction required any fallback.
 table["baseline_uses_fallback"] = (
     table["lag_7"].isna() & table["baseline"].notna()
 )
+
 
 
 # 5. CALENDAR FEATURES
@@ -160,23 +200,53 @@ for name, (start, end) in PERIODS.items():
 table = table[table["period"].notna()].reset_index()
 
 
+
 # 8. MISSING VALUES
 
-# Missing actual consumption: excluded, never invented (methodology rule)
+# Missing actual consumption cannot be used as a target.
+# Keep the dates in the original daily calendar for
+# correct lag construction, but exclude missing targets
+# from the modeling dataset.
+
 missing_target = table["consumption_mwh"].isna()
-print("Rows removed because actual consumption is missing:", missing_target.sum())
-table = table[~missing_target]
+
+print(
+    "Rows removed because actual consumption is missing:",
+    missing_target.sum()
+)
+
+table = table.loc[~missing_target].copy()
+
+# Report missing predictor values without deleting rows.
+# Model-specific imputation is performed inside the
+# training pipelines of Notebooks 06, 07, 08 and 11.
 
 missing = table.isna().sum()
 missing = missing[missing > 0]
 
-if len(missing):
+if len(missing) > 0:
     print("\nMissing feature values per column:")
     print(missing)
-    raise ValueError(
-        "Some features are missing. Decide as a group how to handle them "
-        "before modelling. features.csv was not saved."
+    print(
+        "\nMissing predictors are retained as NaN "
+        "for training-fitted preprocessing."
     )
+else:
+    print("\nNo missing values in the modeling table.")
+
+# Baseline must still produce a prediction for every
+# observed target date.
+
+if table["baseline"].isna().any():
+    missing_baseline_dates = table.loc[
+        table["baseline"].isna(), "date"
+    ]
+
+    raise ValueError(
+        "Baseline unavailable for these target dates: "
+        + str(missing_baseline_dates.tolist())
+    )
+
 
 
 # 9. SANITY CHECKS

@@ -50,6 +50,8 @@ We aggregate these measurements to calculate total electricity consumption for e
 
 The resulting daily electricity consumption is the target variable of our forecasting models.
 
+**Daylight-saving time and data completeness:** Daily consumption is aggregated using Swiss local calendar dates. Ordinary days contain 96 quarter-hour observations, while spring daylight-saving transition days contain 92 observations, as expected. However, the ten autumn transition days between 2017 and 2026 contain only 96 observations instead of the expected 100. The second occurrence of the hour between 02:00 and 03:00 CET is absent from the frozen dataset. Consequently, the aggregated consumption totals for these dates may not fully represent the 25-hour calendar day. We retain the original observations without imputing missing intervals and document this limitation in the exploratory data analysis.
+
 Historical electricity consumption may also be used to construct lagged predictors, provided those observations would have been available at the forecasting deadline.
 
 **Electricity data availability:** Because the exact historical publication times of the Basel-Stadt electricity observations cannot be verified, we adopt a conservative availability assumption: only consumption observations from at least five calendar days before the target date (`lag_5` and older) are used as predictors. This rule is applied consistently throughout the project. Missing lagged observations are handled using explicitly documented fallback or preprocessing procedures.
@@ -121,7 +123,7 @@ All features must be checked for availability at the time of prediction to avoid
 | Group | Columns | Reason |
 |---|---|---|
 | Target | `consumption_mwh` | Value to predict |
-| Baseline | `baseline` (= `lag_7`, with fallback to `lag_14`, `lag_21`, and `lag_28` if earlier values are missing), `baseline_uses_fallback` | Same-weekday-last-week benchmark, using older same-weekday observations when necessary |
+| Baseline | `baseline` (`lag_7`, with fallback to `lag_14`, `lag_21`, `lag_28`, then a historical same-weekday average and, if necessary, an eligible historical overall average), `baseline_uses_fallback` | Same-weekday historical benchmark with a predefined fallback for missing consumption observations |
 | Calendar | `weekday`, `is_weekend`, `month`, `is_holiday` (Basel-Stadt), `is_christmas_period` (24 Dec–6 Jan) | Weekends and holidays are 13–20% lower; Christmas-period workdays ~10% lower |
 | Holiday in lags | `lag_7_is_holiday`, `lag_14_is_holiday` | If day t+1−7 was a holiday, `lag_7` is abnormally low (baseline underestimates by 554 MWh on average in 2018–2024) |
 | Weather (forecast) | mean/min/max temperature, precipitation, `heating_degrees` = max(0, 15 − T), `cooling_degrees` = max(0, T − 15) | U-shaped temperature effect, minimum around 11–16 °C |
@@ -129,6 +131,8 @@ All features must be checked for availability at the time of prediction to avoid
 | Period | `period` = train (2018–2024), validation (2025), test (Jan–Oct 2026) | Methodology split. For the monthly validation folds, select training rows by date. |
 
 Scaling/standardization is deliberately not done here: it must be fitted on each fold's training data only.
+
+**Missing-data handling:** Missing daily electricity consumption targets are excluded from model fitting and evaluation, but missing calendar dates remain represented during lag construction so that lags always correspond to the correct calendar-day offsets. Missing predictor values are preserved in the feature table and handled through preprocessing fitted exclusively on each model's eligible training data. The same-weekday baseline first uses consumption from seven days earlier, then from 14, 21 and 28 days earlier. If none of these observations is available, it uses the historical average for the same weekday based only on eligible earlier observations, followed by an eligible historical overall average if needed. These rules avoid using future consumption information.
 
 ### Step 4 — Baseline and Forecasting Models
 
@@ -448,25 +452,31 @@ git push -u origin feature/my-task
 
 Then open a pull request on GitHub so another team member can review and merge the changes.
 
-
-
 ---
 
+## Final Results
+
+We compared a same-weekday historical baseline, linear regression models (OLS, Ridge and Lasso), and Random Forest models using chronological monthly validation in 2025. We also investigated whether expanding or rolling training windows improved forecasting performance.
+
+The best-performing configuration on the 2025 validation data was **ordinary least squares (OLS) regression with historical electricity consumption, archived weather forecasts and calendar features, using a rolling three-year training window**.
+
+| Evaluation metric | 2025 validation | 2026 final test |
+|---|---:|---:|
+| OLS rolling three-year MAE | 74.64 MWh/day | 72.59 MWh/day |
+| OLS rolling three-year RMSE | 97.66 MWh/day | 94.63 MWh/day |
+| Evaluation days | 365 | 304 |
+
+The final test covered January 1–October 31, 2026. The historical baseline achieved a test MAE of 161.48 MWh/day, compared with 72.59 MWh/day for the selected OLS model. This corresponds to a **55.05% reduction in MAE**.
+
+Model selection was based exclusively on 2025 validation performance. The 2026 test period was used for final evaluation, with monthly model refitting according to the previously established five-calendar-day consumption-data availability rule.
+
+### Limitations
+
+The forecasting exercise relies on conservative assumptions about historical consumption-data publication timing and the availability of archived weather forecasts. Exact historical publication times could not be fully reconstructed.
+
+The frozen electricity dataset also does not explicitly represent the repeated hour on autumn daylight-saving transition days, potentially affecting the corresponding daily totals. Missing observations are not reconstructed using invented consumption values.
+
+The reported results concern retrospective prediction accuracy on the frozen dataset. They do not establish the economic value of the forecasts or guarantee equivalent accuracy in future operational use.
 
 
-## 10. Quick-start checklist
 
-For a new team member:
-
-- [ ] Clone the GitHub repository.
-- [ ] Open the repository in VS Code.
-- [ ] Verify that Python 3.11 is installed.
-- [ ] Create a local `.venv`.
-- [ ] Activate the virtual environment.
-- [ ] Install packages from `requirements.txt`.
-- [ ] Select the `.venv` Python interpreter in VS Code.
-- [ ] Select the `.venv` kernel in Jupyter.
-- [ ] Verify that the required datasets are available.
-- [ ] Run the notebook or script relevant to your task.
-
-**After completing these steps, your local development environment should be ready for the project.**
