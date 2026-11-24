@@ -1,0 +1,10 @@
+{
+  "selected_model": "ols_rolling_3y",
+  "selection_period": "2025-01-01 to 2025-12-31",
+  "selection_metric": "MAE (MWh/day)",
+  "training_window": "rolling_3y",
+  "train_target_cutoff_days_before_first_target": 5,
+  "refit_frequency": "monthly",
+  "specification_reference": "code/08_training_windows.ipynb \u2014 make_ols_pipeline and FEATURES",
+  "note": "Selection based on 2025 validation only; do not revise using 2026 test results."
+}

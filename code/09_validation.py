@@ -39,15 +39,24 @@ def validate_data(df):
     if not df["period"].isin(valid_periods).all():
         raise ValueError("Invalid period labels found.")
 
-    # 4. Check target values
-    if df[TARGET].isna().any():
-        raise ValueError("Missing target values found.")
+    # 4. Distinguish missing targets from invalid observed values.
+    # A missing target cannot enter training or evaluation, but its absence
+    # should be reported rather than treated as a corrupted dataset.
+    observed = df[TARGET].dropna().to_numpy(dtype=float)
+    if not np.isfinite(observed).all():
+        raise ValueError("Non-finite observed target values found.")
 
-    if not np.isfinite(df[TARGET].to_numpy(dtype=float)).all():
-        raise ValueError("Non-finite target values found.")
-
+    n_missing_targets = int(df[TARGET].isna().sum())
     print("Data validation passed.")
     print(f"Total observations: {len(df)}")
+    print(f"Rows with missing targets: {n_missing_targets}")
+
+    # A missing calendar date may be absent from features.csv entirely;
+    # report these gaps separately, only within each defined period.
+    for period, group in df.groupby("period", sort=False):
+        expected = pd.date_range(group["date"].min(), group["date"].max(), freq="D")
+        missing_dates = expected.difference(pd.DatetimeIndex(group["date"]))
+        print(f"Missing calendar dates within {period}: {len(missing_dates)}")
 
     return True
 
@@ -105,6 +114,11 @@ def get_expanding_fold(df, prediction_month):
         (df["date"] < month_end)
     ].copy()
 
+    # Unobserved targets cannot be used to fit the model.
+    # Keep validation rows visible so missing targets can be reported
+    # and handled explicitly by the evaluation procedure.
+    train = train[train[TARGET].notna()].copy()
+
     # Check chronological separation
     if train.empty or validation.empty:
         raise ValueError("Empty training or validation dataset.")
@@ -149,6 +163,11 @@ def get_rolling_fold(df, prediction_month, years=3):
         (df["date"] >= month_start) &
         (df["date"] < month_end)
     ].copy()
+
+    # Unobserved targets cannot be used to fit the model.
+    # Keep validation rows visible so missing targets can be reported
+    # and handled explicitly by the evaluation procedure.
+    train = train[train[TARGET].notna()].copy()
 
     # Check chronological separation
     if train.empty or validation.empty:
@@ -385,53 +404,72 @@ def validate_actual_values(predictions, features):
 
 
 
-def validate_prediction_coverage(predictions, year=2025):
+def validate_prediction_coverage(
+    predictions,
+    year=2025,
+    expected_dates=None
+):
+    """Check each model's date coverage and monthly labels.
+
+    By default, expect the entire calendar year `year` (historical
+    behavior, suitable for complete 2025 validation). Pass `expected_dates`
+    to check a shorter period, such as January--October 2026, or only
+    target dates actually observed in the frozen dataset.
+
+    `expected_dates` must be chosen independently of model predictions:
+    never derive it from the predictions being checked.
     """
-    Check complete daily prediction coverage and
-    correct monthly labels for each model.
-    """
+    if "model" not in predictions.columns or "date" not in predictions.columns:
+        raise ValueError("Predictions need model and date columns.")
+    if predictions.empty:
+        raise ValueError("No predictions to validate.")
 
     pred = predictions.copy()
     pred["date"] = pd.to_datetime(pred["date"])
+    if pred["date"].isna().any():
+        raise ValueError("Missing or invalid prediction dates.")
+    if pred["model"].isna().any():
+        raise ValueError("Missing model names.")
 
-    expected_dates = pd.date_range(
-        start=f"{year}-01-01",
-        end=f"{year}-12-31",
-        freq="D"
-    )
 
-    # Check the monthly labels
-    expected_months = pred["date"].dt.strftime("%Y-%m")
-
-    actual_months = (
-        pred["validation_month"].astype(str).str[:7]
-    )
-
-    if not (expected_months == actual_months).all():
-        raise ValueError(
-            "Validation month does not match prediction date."
+    # Determine expected evaluation dates
+    if expected_dates is None:
+        expected_dates = pd.date_range(
+            start=f"{year}-01-01",
+            end=f"{year}-12-31",
+            freq="D"
+        )
+    else:
+        expected_dates = pd.DatetimeIndex(
+            pd.to_datetime(expected_dates)
         )
 
-    # Check complete coverage for every model
+    if len(expected_dates) == 0 or expected_dates.hasnans or expected_dates.has_duplicates:
+        raise ValueError("Expected dates must be nonempty, valid and unique.")
+    expected_dates = expected_dates.sort_values()
+
+    if "validation_month" in pred.columns:
+        expected_months = pred["date"].dt.strftime("%Y-%m")
+        actual_months = pred["validation_month"].astype(str).str[:7]
+        if not (expected_months == actual_months).all():
+            raise ValueError("Validation month does not match prediction date.")
+
     for model, group in pred.groupby("model"):
         actual_dates = pd.DatetimeIndex(group["date"])
+        if actual_dates.has_duplicates:
+            raise ValueError(f"Duplicate prediction dates for {model}.")
 
         missing = expected_dates.difference(actual_dates)
         extra = actual_dates.difference(expected_dates)
-
-        if len(missing) > 0 or len(extra) > 0:
+        if len(missing) or len(extra):
             raise ValueError(
                 f"Incomplete coverage for {model}: "
                 f"{len(missing)} missing, {len(extra)} extra dates."
             )
 
-        if actual_dates.has_duplicates:
-            raise ValueError(
-                f"Duplicate prediction dates for {model}."
-            )
-
     print("Prediction coverage validation passed.")
-    print("Expected days:", len(expected_dates))
+    print("Models checked:", pred["model"].nunique())
+    print("Expected dates:", len(expected_dates))
 
     return True
 
@@ -595,7 +633,18 @@ if __name__ == "__main__":
         year=2025
     )
 
-
+    # Synthetic two-day example: verify shorter/explicit date coverage.
+    # These are NOT 2026 model forecasts or test outcomes.
+    sample_predictions = pd.DataFrame({
+        "date": pd.to_datetime(["2026-01-01", "2026-01-02"]),
+        "model": ["example_model", "example_model"],
+        "validation_month": ["2026-01", "2026-01"],
+    })
+    assert validate_prediction_coverage(
+        sample_predictions,
+        expected_dates=pd.to_datetime(["2026-01-01", "2026-01-02"])
+    )
+    print("Custom evaluation period test passed.")
 
 
     # Test linear model predictions
